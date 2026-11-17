@@ -609,6 +609,19 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 		/* Verify the set of connection parameters. */
 		check_conn_params(keywords, values, user);
 
+		/*
+		 * Final security check on proxied keywords. Note that expand_dbname
+		 * is false below; we don't need to worry about parsing dbname itself.
+		 */
+		for (int i = 0; keywords[i]; i++)
+		{
+			if (!libpqsrv_is_valid_proxy_option(keywords[i]))
+				ereport(ERROR,
+						errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						errmsg("permission denied to set connection option \"%s\"",
+							   keywords[i]));
+		}
+
 		/* first time, allocate or get the custom wait event */
 		if (pgfdw_we_connect == 0)
 			pgfdw_we_connect = WaitEventExtensionNew("PostgresFdwConnect");
@@ -680,12 +693,18 @@ UserMappingPasswordRequired(UserMapping *user)
 	return true;
 }
 
+/*
+ * Return whether SCRAM pass-through is enabled.
+ *
+ * If use_scram_passthrough is specified in both the foreign server
+ * and the user mapping, the user mapping setting takes precedence.
+ */
 static bool
 UseScramPassthrough(ForeignServer *server, UserMapping *user)
 {
 	ListCell   *cell;
 
-	foreach(cell, server->options)
+	foreach(cell, user->options)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
 
@@ -693,7 +712,7 @@ UseScramPassthrough(ForeignServer *server, UserMapping *user)
 			return defGetBoolean(def);
 	}
 
-	foreach(cell, user->options)
+	foreach(cell, server->options)
 	{
 		DefElem    *def = (DefElem *) lfirst(cell);
 
